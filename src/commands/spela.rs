@@ -21,7 +21,7 @@ pub(crate) struct SpelaCommand;
 #[async_trait]
 impl Command for SpelaCommand {
     fn name(&self) -> String {
-        "play".to_string()
+        "spela".to_string()
     }
 
     fn register<'a>(
@@ -29,7 +29,7 @@ impl Command for SpelaCommand {
         command: &'a mut serenity::builder::CreateApplicationCommand,
     ) -> &'a mut serenity::builder::CreateApplicationCommand {
         command
-            .name("play")
+            .name("spela")
             .name_localized("sv-SE", "spela")
             .description("Join a \"spela\" role ")
             .description_localized("sv-SE", "Gå med i en spela-roll")
