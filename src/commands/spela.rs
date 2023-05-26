@@ -67,7 +67,8 @@ impl Command for SpelaCommand {
                                     row.create_select_menu(|menu| {
                                         menu.custom_id(self.name())
                                             .placeholder("Inga roller valda")
-                                            .max_values(suitable_guild_roles.len() as u64);
+                                            .max_values(suitable_guild_roles.len() as u64)
+                                            .min_values(0);
                                         menu.options(|options| {
                                             for role in suitable_guild_roles {
                                                 options.create_option(|option| {
