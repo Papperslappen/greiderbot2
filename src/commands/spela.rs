@@ -107,10 +107,14 @@ impl Command for SpelaCommand {
     }
 
     async fn component_interaction(&self, interaction: MessageComponentInteraction, ctx: &Context) {
-        let Ok(guild_roles) = interaction.guild_id.expect("Command interaction lacks a guild").roles(&ctx).await 
+        let Ok(guild_roles) = interaction
+            .guild_id
+            .expect("Command interaction lacks a guild")
+            .roles(&ctx)
+            .await
         else {
             error!("Could not fetch roles");
-            return
+            return;
         };
 
         let mut member = interaction
@@ -148,8 +152,10 @@ impl Command for SpelaCommand {
             .cloned()
             .collect::<Vec<_>>();
 
-        let (Ok(_),Ok(_)) = (member.add_roles(ctx, &add_roleids).await,
-        member.remove_roles(ctx, &remove_roleids).await) else{
+        let (Ok(_), Ok(_)) = (
+            member.add_roles(ctx, &add_roleids).await,
+            member.remove_roles(ctx, &remove_roleids).await,
+        ) else {
             error!("Could not update roles of user");
             return;
         };
@@ -157,8 +163,7 @@ impl Command for SpelaCommand {
         interaction
             .create_interaction_response(&ctx, |response| {
                 response.interaction_response_data(|data| {
-                    data.ephemeral(true).content(
-                        format!(
+                    data.ephemeral(true).content(format!(
                         "La till rollerna: {}. \n Tog bort rollerna: {}",
                         add_roleids
                             .iter()

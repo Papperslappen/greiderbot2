@@ -98,7 +98,7 @@ impl EventHandler for Greiderbot {
                 let lock = self.commands.lock().await;
                 let Some(command) = lock.get(&interaction.data.name) else {
                     error!("Non existent command: {}", &interaction.data.name);
-                    return
+                    return;
                 };
                 command.run(interaction, &ctx).await;
             }
@@ -106,7 +106,7 @@ impl EventHandler for Greiderbot {
                 let lock = self.commands.lock().await;
                 let Some(command) = lock.get(&interaction.data.custom_id) else {
                     error!("Non existent: {:?}", &interaction);
-                    return
+                    return;
                 };
                 command.component_interaction(interaction, &ctx).await;
             }
@@ -132,7 +132,7 @@ async fn main() {
     let mut client = Client::builder(discord_token, GatewayIntents::MESSAGE_CONTENT)
         .event_handler(
             GreiderbotBuilder::default()
-                .add_command(SpelaCommand::default())
+                .add_command(SpelaCommand)
                 .build(),
         )
         .await
