@@ -2,12 +2,14 @@ use std::collections::HashSet;
 
 use serenity::{
     async_trait,
-    model::prelude::{
-        interaction::{
-            application_command::ApplicationCommandInteraction,
-            message_component::MessageComponentInteraction,
-        },
-        RoleId,
+    builder::{
+        CreateActionRow, CreateCommand, CreateInteractionResponse,
+        CreateInteractionResponseMessage, CreateSelectMenu, CreateSelectMenuKind,
+        CreateSelectMenuOption,
+    },
+    model::{
+        application::{CommandInteraction, ComponentInteraction, ComponentInteractionDataKind},
+        id::RoleId,
     },
     prelude::Context,
 };
@@ -15,171 +17,146 @@ use tracing::error;
 
 use super::Command;
 
+const ROLE_PREFIX: &str = "spela ";
+// Discord allows at most 25 options in a select menu
+const MAX_ROLES: usize = 25;
+
 #[derive(Default)]
 pub(crate) struct SpelaCommand;
 
 #[async_trait]
 impl Command for SpelaCommand {
-    fn name(&self) -> String {
-        "spela".to_string()
+    fn name(&self) -> &'static str {
+        "spela"
     }
 
-    fn register<'a>(
-        &self,
-        command: &'a mut serenity::builder::CreateApplicationCommand,
-    ) -> &'a mut serenity::builder::CreateApplicationCommand {
-        command
-            .name("spela")
+    fn register(&self) -> CreateCommand {
+        CreateCommand::new(self.name())
             .name_localized("sv-SE", "spela")
             .description("Join a \"spela\" role ")
             .description_localized("sv-SE", "Gå med i en spela-roll")
     }
 
-    async fn run(&self, command_interaction: ApplicationCommandInteraction, ctx: &Context) {
-        let prefix = "spela ";
-
-        let Some(guild_id) = command_interaction.guild_id else {
-            panic!("Command not posted from a guild")
+    async fn run(&self, command_interaction: CommandInteraction, ctx: &Context) {
+        let (Some(guild_id), Some(member)) =
+            (command_interaction.guild_id, &command_interaction.member)
+        else {
+            error!("Command not posted from a guild");
+            return;
         };
-        let Ok(suitable_guild_roles) = guild_id.to_partial_guild(&ctx).await.map(|guild| {
-            guild
-                .roles
-                .into_values()
-                .filter(|role| role.name.starts_with(prefix))
-                .take(25)
-                .collect::<Vec<_>>()
-        }) else {
+        let Ok(guild_roles) = guild_id.roles(&ctx.http).await else {
             error!("Could not load roles");
             return;
         };
+        let mut suitable_guild_roles = guild_roles
+            .into_values()
+            .filter(|role| role.name.starts_with(ROLE_PREFIX))
+            .collect::<Vec<_>>();
+        suitable_guild_roles.sort_by(|a, b| a.name.cmp(&b.name));
+        suitable_guild_roles.truncate(MAX_ROLES);
 
-        command_interaction
-            .create_interaction_response(&ctx.http, |response| {
-                response
-                    .kind(serenity::model::prelude::interaction::InteractionResponseType::ChannelMessageWithSource)
-                    .interaction_response_data(|data| {
-                        data.content("Gå med i roll")
-                            .custom_id(self.name())
-                            .ephemeral(true)
-                            .title("Spela")
-                            .components(|component| {
-                                component.create_action_row(|row| {
-                                    row.create_select_menu(|menu| {
-                                        menu.custom_id(self.name())
-                                            .placeholder("Inga roller valda")
-                                            .max_values(suitable_guild_roles.len() as u64)
-                                            .min_values(0);
-                                        menu.options(|options| {
-                                            for role in suitable_guild_roles {
-                                                options.create_option(|option| {
-                                                    option
-                                                        .label(role.name)
-                                                        .value(role.id)
-                                                        .default_selection(
-                                                            command_interaction.member.clone().expect("Interaction not performed by guild member").roles.contains(&role.id)
-                                                        )
-                                                });
-                                            }
-                                            options
-                                        })
-                                    })
-                                });
-                                component
-                            })
-                    })
-                //.interaction_response_data(|data| data.content(suitable_guild_roles.join(", ")))
-            })
+        let message = if suitable_guild_roles.is_empty() {
+            CreateInteractionResponseMessage::new()
+                .content("Det finns inga spela-roller")
+                .ephemeral(true)
+        } else {
+            let max_values = suitable_guild_roles.len() as u8;
+            let options = suitable_guild_roles
+                .into_iter()
+                .map(|role| {
+                    CreateSelectMenuOption::new(role.name, role.id.to_string())
+                        .default_selection(member.roles.contains(&role.id))
+                })
+                .collect();
+            let menu = CreateSelectMenu::new(self.name(), CreateSelectMenuKind::String { options })
+                .placeholder("Inga roller valda")
+                .min_values(0)
+                .max_values(max_values);
+            CreateInteractionResponseMessage::new()
+                .content("Gå med i roll")
+                .ephemeral(true)
+                .components(vec![CreateActionRow::SelectMenu(menu)])
+        };
+
+        if let Err(why) = command_interaction
+            .create_response(&ctx.http, CreateInteractionResponse::Message(message))
             .await
-            .expect("Could not reply to message");
-
-        // let Some(Ok(guild)) = guild
-        // else {
-        //
-        // };
-        // let play_roles = guild.roles.values().map(|role| role.name.clone()).collect::<Vec<_>>();
-        // if let (guild_roles) = command
-        //     .guild_id.unwrap()
-        //     .to_partial_guild(ctx)
-        //     .await.unwrap()
-        //     .roles.values().map(|role| role.name.clone()).collect::<Vec<_>>(){
-
-        //     }
+        {
+            error!("Could not reply to command: {:?}", why);
+        }
     }
 
-    async fn component_interaction(&self, interaction: MessageComponentInteraction, ctx: &Context) {
-        let Ok(guild_roles) = interaction
-            .guild_id
-            .expect("Command interaction lacks a guild")
-            .roles(&ctx)
-            .await
-        else {
+    async fn component_interaction(&self, interaction: ComponentInteraction, ctx: &Context) {
+        let (Some(guild_id), Some(member)) = (interaction.guild_id, &interaction.member) else {
+            error!("Component interaction not performed by a guild member");
+            return;
+        };
+        let ComponentInteractionDataKind::StringSelect { values } = &interaction.data.kind else {
+            error!("Unexpected component kind: {:?}", &interaction.data.kind);
+            return;
+        };
+        let Ok(guild_roles) = guild_id.roles(&ctx.http).await else {
             error!("Could not fetch roles");
             return;
         };
+        let is_play_role = |id: &RoleId| {
+            guild_roles
+                .get(id)
+                .is_some_and(|role| role.name.starts_with(ROLE_PREFIX))
+        };
 
-        let mut member = interaction
-            .member
-            .clone()
-            .expect("Could not get guild member from interaction");
-
-        let selected_roleids = interaction
-            .data
-            .values
+        // Never trust the submitted values to be roles that were actually offered
+        let selected_roleids = values
             .iter()
-            .map(|value| RoleId::from(value.parse::<u64>().expect("Could not parse value")))
-            //.map(|id| guild_roles.get(&id))
+            .filter_map(|value| value.parse::<RoleId>().ok())
+            .filter(is_play_role)
             .collect::<HashSet<_>>();
 
-        let member_curent_roleids = member.roles.clone();
-
-        let user_current_play_rolids = member_curent_roleids
-            .into_iter()
-            .filter(|id| {
-                guild_roles
-                    .get(id)
-                    .expect("Strange! guild member of non guild role")
-                    .name
-                    .starts_with("spela ")
-            })
+        let user_current_play_roleids = member
+            .roles
+            .iter()
+            .copied()
+            .filter(is_play_role)
             .collect::<HashSet<_>>();
 
-        let remove_roleids = user_current_play_rolids
+        let remove_roleids = user_current_play_roleids
             .difference(&selected_roleids)
-            .cloned()
+            .copied()
             .collect::<Vec<_>>();
         let add_roleids = selected_roleids
-            .difference(&user_current_play_rolids)
-            .cloned()
+            .difference(&user_current_play_roleids)
+            .copied()
             .collect::<Vec<_>>();
 
         let (Ok(_), Ok(_)) = (
-            member.add_roles(ctx, &add_roleids).await,
-            member.remove_roles(ctx, &remove_roleids).await,
+            member.add_roles(&ctx.http, &add_roleids).await,
+            member.remove_roles(&ctx.http, &remove_roleids).await,
         ) else {
             error!("Could not update roles of user");
             return;
         };
 
-        interaction
-            .create_interaction_response(&ctx, |response| {
-                response.interaction_response_data(|data| {
-                    data.ephemeral(true).content(format!(
-                        "La till rollerna: {}. \n Tog bort rollerna: {}",
-                        add_roleids
-                            .iter()
-                            .map(mention_role)
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                        remove_roleids
-                            .iter()
-                            .map(mention_role)
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                    ))
-                })
-            })
+        let message = CreateInteractionResponseMessage::new()
+            .ephemeral(true)
+            .content(format!(
+                "La till rollerna: {}. \n Tog bort rollerna: {}",
+                add_roleids
+                    .iter()
+                    .map(mention_role)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                remove_roleids
+                    .iter()
+                    .map(mention_role)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ));
+        if let Err(why) = interaction
+            .create_response(&ctx.http, CreateInteractionResponse::Message(message))
             .await
-            .expect("Could not send response");
+        {
+            error!("Could not send response: {:?}", why);
+        }
     }
 }
 

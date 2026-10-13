@@ -3,13 +3,14 @@ use std::env;
 
 use clap::Parser;
 
+use commands::blanda::BlandaCommand;
 use commands::spela::SpelaCommand;
-use serenity::{async_trait, futures::future::join_all};
-//use serenity::model::application::command::Command;
-use serenity::model::application::interaction::Interaction;
+use serenity::model::application::Interaction;
 use serenity::model::gateway::Ready;
 use serenity::prelude::*;
+use serenity::{async_trait, futures::future::join_all};
 use tracing::{debug, error, info};
+use tracing_subscriber::EnvFilter;
 
 mod commands;
 
@@ -35,19 +36,16 @@ impl GreiderbotBuilder {
     }
 }
 
-#[derive(Default)]
 struct Greiderbot {
-    commands: Mutex<HashMap<String, Box<dyn crate::commands::Command>>>,
+    commands: HashMap<&'static str, Box<dyn crate::commands::Command>>,
 }
 
 impl Greiderbot {
     fn from_commands(commands: Vec<Box<dyn crate::commands::Command>>) -> Greiderbot {
-        let commands = Mutex::new(
-            commands
-                .into_iter()
-                .map(|c| (c.name(), c))
-                .collect::<HashMap<_, _>>(),
-        );
+        let commands = commands
+            .into_iter()
+            .map(|c| (c.name(), c))
+            .collect::<HashMap<_, _>>();
         Greiderbot { commands }
     }
 }
@@ -55,37 +53,25 @@ impl Greiderbot {
 #[async_trait]
 impl EventHandler for Greiderbot {
     async fn ready(&self, ctx: Context, ready: Ready) {
-        let name = ready.user.name;
-        let guilds = join_all(
-            ready
-                .guilds
-                .iter()
-                .map(|guild| async {
-                    guild
-                        .id
-                        .to_partial_guild(ctx.clone())
-                        .await
-                        .expect("Could not load guilds from api")
-                        .name
-                })
-                .collect::<Vec<_>>(),
-        )
+        let guilds = join_all(ready.guilds.iter().map(|guild| async {
+            match guild.id.to_partial_guild(&ctx.http).await {
+                Ok(guild) => guild.name,
+                Err(_) => guild.id.to_string(),
+            }
+        }))
         .await
         .join(", ");
-        info!("Hello from {} connected to guilds: {}", name, guilds);
+        info!(
+            "Hello from {} connected to guilds: {}",
+            ready.user.name, guilds
+        );
         info!("Registring commands");
-        let commands = self.commands.lock().await;
 
-        for guild in ready.guilds {
-            let _guild_commands = guild
-                .id
-                .set_application_commands(&ctx, |application_command| {
-                    for (_, command) in commands.iter() {
-                        application_command.create_application_command(|c| command.register(c));
-                    }
-                    application_command
-                })
-                .await;
+        for guild in &ready.guilds {
+            let commands = self.commands.values().map(|c| c.register()).collect();
+            if let Err(why) = guild.id.set_commands(&ctx.http, commands).await {
+                error!("Could not register commands in {}: {:?}", guild.id, why);
+            }
         }
     }
 
@@ -93,18 +79,15 @@ impl EventHandler for Greiderbot {
         debug!("RECEIVED INTERACTION: {:?}", &interaction);
         match interaction {
             Interaction::Ping(_) => {}
-            Interaction::ApplicationCommand(interaction) => {
-                //FIXME: This is probably bad
-                let lock = self.commands.lock().await;
-                let Some(command) = lock.get(&interaction.data.name) else {
+            Interaction::Command(interaction) => {
+                let Some(command) = self.commands.get(interaction.data.name.as_str()) else {
                     error!("Non existent command: {}", &interaction.data.name);
                     return;
                 };
                 command.run(interaction, &ctx).await;
             }
-            Interaction::MessageComponent(interaction) => {
-                let lock = self.commands.lock().await;
-                let Some(command) = lock.get(&interaction.data.custom_id) else {
+            Interaction::Component(interaction) => {
+                let Some(command) = self.commands.get(interaction.data.custom_id.as_str()) else {
                     error!("Non existent: {:?}", &interaction);
                     return;
                 };
@@ -117,21 +100,21 @@ impl EventHandler for Greiderbot {
 
 #[tokio::main]
 async fn main() {
-    dotenv::dotenv().ok();
+    dotenvy::dotenv().ok();
     let opt = Opt::parse();
 
     let discord_token =
         env::var("DISCORD_TOKEN").expect("Expected DISCORD_TOKEN environment variable");
 
-    if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", format!("{},hyper=info,mio=info", opt.log_level))
-    }
+    let log_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(format!("{},hyper=info,mio=info", opt.log_level)));
+    tracing_subscriber::fmt().with_env_filter(log_filter).init();
 
-    tracing_subscriber::fmt::init();
-
-    let mut client = Client::builder(discord_token, GatewayIntents::MESSAGE_CONTENT)
+    // Slash commands and components arrive without any gateway intents
+    let mut client = Client::builder(&discord_token, GatewayIntents::empty())
         .event_handler(
             GreiderbotBuilder::default()
+                .add_command(BlandaCommand)
                 .add_command(SpelaCommand)
                 .build(),
         )

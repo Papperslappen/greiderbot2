@@ -1,27 +1,17 @@
 use serenity::{
     async_trait,
-    builder::CreateApplicationCommand,
-    model::prelude::interaction::{
-        application_command::ApplicationCommandInteraction,
-        message_component::MessageComponentInteraction,
-    },
+    builder::CreateCommand,
+    model::application::{CommandInteraction, ComponentInteraction},
     prelude::Context,
 };
 
+pub(crate) mod blanda;
 pub(crate) mod spela;
 
 #[async_trait]
 pub(crate) trait Command: Sync + Send {
-    fn name(&self) -> String;
-    fn register<'a>(
-        &self,
-        command: &'a mut CreateApplicationCommand,
-    ) -> &'a mut CreateApplicationCommand;
-    async fn run(&self, command: ApplicationCommandInteraction, ctx: &Context);
-    async fn component_interaction(
-        &self,
-        _interaction: MessageComponentInteraction,
-        _ctx: &Context,
-    ) {
-    }
+    fn name(&self) -> &'static str;
+    fn register(&self) -> CreateCommand;
+    async fn run(&self, command: CommandInteraction, ctx: &Context);
+    async fn component_interaction(&self, _interaction: ComponentInteraction, _ctx: &Context) {}
 }
