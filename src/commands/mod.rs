@@ -6,7 +6,9 @@ use serenity::{
 };
 
 pub(crate) mod blanda;
+pub(crate) mod retire;
 pub(crate) mod spela;
+pub(crate) mod util;
 
 #[async_trait]
 pub(crate) trait Command: Sync + Send {

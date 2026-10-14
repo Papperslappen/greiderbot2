@@ -4,6 +4,7 @@ use std::env;
 use clap::Parser;
 
 use commands::blanda::BlandaCommand;
+use commands::retire::RetireCommand;
 use commands::spela::SpelaCommand;
 use serenity::model::application::Interaction;
 use serenity::model::gateway::Ready;
@@ -115,6 +116,10 @@ async fn main() {
         .event_handler(
             GreiderbotBuilder::default()
                 .add_command(BlandaCommand)
+                .add_command(RetireCommand::load(
+                    env::var("PENSION_CATEGORIES_FILE")
+                        .unwrap_or_else(|_| "pension_categories.json".to_string()),
+                ))
                 .add_command(SpelaCommand)
                 .build(),
         )

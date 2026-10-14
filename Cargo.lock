@@ -466,6 +466,7 @@ dependencies = [
  "clap",
  "dotenvy",
  "rand 0.10.3",
+ "serde_json",
  "serenity",
  "tokio",
  "tracing",
